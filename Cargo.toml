@@ -1,0 +1,21 @@
+[package]
+name = "hey-bozo"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-trait = "0.1.72"
+dasp_frame = "0.11.0"
+dasp_interpolate = { version = "0.11.0", features = ["sinc", "linear"] }
+dasp_ring_buffer = "0.11.0"
+dasp_sample = "0.11.0"
+dasp_signal = "0.11.0"
+dotenv = "0.15.0"
+pv_porcupine = "2.2.1"
+ringbuf = "0.3.3"
+serenity = "0.11.6"
+songbird = "0.3.2"
+tokio = { version = "1.29.1", features = ["rt", "rt-multi-thread", "macros"] }
+wav = "1.0.0"
