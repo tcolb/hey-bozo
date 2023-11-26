@@ -1,18 +1,15 @@
-// Discord produces 48khz pcm 16
 use std::{env, sync::Arc};
 use serenity::prelude::TypeMap;
 use serenity::{client::{Client, Context, EventHandler}, 
                framework::{StandardFramework, standard::{macros::{group, command}, Args, CommandResult}},
                prelude::{GatewayIntents, Mentionable, TypeMapKey},
                model::{gateway::Ready, prelude::{Message, ChannelId}}};
-use songbird::events::context_data::SpeakingUpdateData;
 use songbird::{EventHandler as VoiceEventHandler, EventContext, model::payload::{Speaking, ClientDisconnect}, Event, Config, driver::DecodeMode, SerenityInit, CoreEvent};
 use async_trait::async_trait;
 use tokio::sync::{RwLock, mpsc};
 
 pub struct SharedState {
-    pub tx_packet: mpsc::Sender<(u32, Vec<i16>)>,
-    pub tx_state: mpsc::Sender<SpeakingUpdateData>
+    pub tx_packet: mpsc::Sender<(u32, Vec<i16>)>
 }
 
 impl TypeMapKey for SharedState {
@@ -62,11 +59,6 @@ impl VoiceEventHandler for Receiver {
                     data.ssrc,
                     if data.speaking {"started"} else {"stopped"},
                 );
-
-                let mut write_guard = self.data.write().await;
-                if let Some(state) = write_guard.get_mut::<SharedState>() {
-                    state.tx_state.send(data.clone()).await.unwrap();
-                }
             },
             EventContext::VoicePacket(data) => {
                 if let Some(audio) = data.audio {
@@ -167,7 +159,7 @@ async fn leave(ctx: &Context, msg: &Message) -> CommandResult {
     let guild_id = guild.id;
 
     let manager = songbird::get(ctx).await
-        .expect("Songbird Voice client placed in at initialisation.").clone();
+        .expect("Songbird Voice client placed in at initialization.").clone();
     let has_handler = manager.get(guild_id).is_some();
 
     if has_handler {

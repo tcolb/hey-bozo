@@ -1,5 +1,5 @@
-use std::{fs::OpenOptions, env, collections::VecDeque};
-use tokio::sync::mpsc;
+use std::{fs::OpenOptions, env, collections::VecDeque, time::Duration};
+use tokio::{sync::mpsc, time::timeout};
 use wav::WAV_FORMAT_PCM;
 
 // Resampling
@@ -19,10 +19,17 @@ async fn read_frames(rx: &mut mpsc::Receiver<(u32, Vec<i16>)>, buf: &mut VecDequ
         out.push(Vec::with_capacity(n));
     }
 
-    // TODO timeout waiting
     while buf.len() < n * 2 {
-        let (_id, packet_audio) = rx.recv().await.unwrap();
-        buf.extend(packet_audio);
+        match timeout(Duration::from_millis(100), rx.recv()).await {
+            Ok(what) => {
+                let (_id, packet_audio) = what.unwrap();
+                buf.extend(packet_audio);
+            },
+            Err(_elapsed) => {
+                let sample_count = (100 * 48) as usize;
+                buf.extend(vec![0; sample_count]);
+            }
+        }
     }
     
     for _ in 0..n {
