@@ -1,15 +1,20 @@
+use std::collections::HashMap;
 use std::{env, sync::Arc};
 use serenity::prelude::TypeMap;
 use serenity::{client::{Client, Context, EventHandler}, 
                framework::{StandardFramework, standard::{macros::{group, command}, Args, CommandResult}},
                prelude::{GatewayIntents, Mentionable, TypeMapKey},
                model::{gateway::Ready, prelude::{Message, ChannelId}}};
+use songbird::model::id::UserId;
 use songbird::{EventHandler as VoiceEventHandler, EventContext, model::payload::{Speaking, ClientDisconnect}, Event, Config, driver::DecodeMode, SerenityInit, CoreEvent};
 use async_trait::async_trait;
 use tokio::sync::{RwLock, mpsc};
 
+use crate::listener;
+
 pub struct SharedState {
-    pub tx_packet: mpsc::Sender<(u32, Vec<i16>)>
+    pub users: HashMap<u32, mpsc::Sender<listener::ListenerEvent>>,
+    pub id_to_ssrc: HashMap<UserId, u32>
 }
 
 impl TypeMapKey for SharedState {
@@ -52,6 +57,17 @@ impl VoiceEventHandler for Receiver {
                     ssrc,
                     speaking,
                 );
+                
+                let mut write_guard = self.data.write().await;
+                if let Some(state) = write_guard.get_mut::<SharedState>() {
+                    if !state.users.contains_key(ssrc) {
+                        let (tx_listener_event, mut rx_listener_event) = mpsc::channel::<listener::ListenerEvent>(32);
+                        state.users.insert(ssrc.clone(), tx_listener_event);
+                        tokio::spawn(async move {
+                            listener::listener_loop(&mut rx_listener_event).await;
+                        });
+                    }
+                }
             },
             EventContext::SpeakingUpdate(data) => {
                 println!(
@@ -70,16 +86,10 @@ impl VoiceEventHandler for Receiver {
                         data.packet.ssrc,
                     );
 
-                    let mut write_guard = self.data.write().await;
+                    let mut write_guard: tokio::sync::RwLockWriteGuard<'_, TypeMap> = self.data.write().await;
                     if let Some(state) = write_guard.get_mut::<SharedState>() {
-
-                        match state.tx_packet.send((data.packet.ssrc, audio.clone())).await {
-                            Ok(()) => {
-
-                            },
-                            Err(e) => {
-                                println!("Error {}", e);
-                            }
+                        if let Some(tx) = state.users.get(&data.packet.ssrc) {
+                            tx.send(listener::ListenerEvent::AudioPacket(audio.clone())).await.unwrap();
                         }
                     }
                 } else {
@@ -88,6 +98,14 @@ impl VoiceEventHandler for Receiver {
             },
             EventContext::ClientDisconnect(ClientDisconnect{user_id, ..}) => {
                 println!("Client disconnected: user {:?}", user_id);
+                let mut write_guard: tokio::sync::RwLockWriteGuard<'_, TypeMap> = self.data.write().await;
+                if let Some(state) = write_guard.get_mut::<SharedState>() {
+                    if let Some(ssrc) = state.id_to_ssrc.get(user_id) {
+                        if let Some(tx) = state.users.get(ssrc) {
+                            tx.send(listener::ListenerEvent::Disconnect).await.unwrap();
+                        }
+                    }
+                }
             }
             _ => ()
         }

@@ -13,7 +13,12 @@ use async_openai::{
     Client as OpenAIClient,
 };
 
-async fn read_frames(rx: &mut mpsc::Receiver<(u32, Vec<i16>)>, buf: &mut VecDeque<i16>, n: usize, channels: usize) -> Vec<Vec<f64>> {
+pub enum ListenerEvent {
+    AudioPacket(Vec<i16>),
+    Disconnect
+}
+
+async fn read_frames(rx: &mut mpsc::Receiver<ListenerEvent>, buf: &mut VecDeque<i16>, n: usize, channels: usize) -> Option<Vec<Vec<f64>>> {
     let mut out = Vec::with_capacity(channels);
     for _ in 0..channels {
         out.push(Vec::with_capacity(n));
@@ -21,9 +26,15 @@ async fn read_frames(rx: &mut mpsc::Receiver<(u32, Vec<i16>)>, buf: &mut VecDequ
 
     while buf.len() < n * 2 {
         match timeout(Duration::from_millis(100), rx.recv()).await {
-            Ok(what) => {
-                let (_id, packet_audio) = what.unwrap();
-                buf.extend(packet_audio);
+            Ok(event) => {
+                match event.unwrap() {
+                    ListenerEvent::AudioPacket(data) => {
+                        buf.extend(data);
+                    },
+                    ListenerEvent::Disconnect => {
+                        return None;
+                    }
+                }
             },
             Err(_elapsed) => {
                 let sample_count = (100 * 48) as usize;
@@ -39,7 +50,7 @@ async fn read_frames(rx: &mut mpsc::Receiver<(u32, Vec<i16>)>, buf: &mut VecDequ
         out[1].push(r.clamp(-1.0, 1.0));
     }
 
-    out
+    Some(out)
 }
 
 
@@ -62,7 +73,7 @@ fn init_cheetah() -> Cheetah {
         .expect("Unable to create Cheetah")
 }
 
-pub async fn listener_loop(rx_48khz: &mut mpsc::Receiver<(u32, Vec<i16>)>) {
+pub async fn listener_loop(rx_48khz: &mut mpsc::Receiver<ListenerEvent>) {
     let porcupine = init_porcupine();
     let cheetah: Cheetah = init_cheetah();
 
@@ -101,7 +112,12 @@ pub async fn listener_loop(rx_48khz: &mut mpsc::Receiver<(u32, Vec<i16>)>) {
         let frames_needed = resampler.input_frames_next();
         let frames = read_frames(rx_48khz, &mut buf, frames_needed, 2).await;
 
-        let resampled_frame = resampler.process(&frames, None).unwrap();
+        if frames.is_none() {
+            // Client disconnected!
+            break;
+        }
+
+        let resampled_frame = resampler.process(&frames.unwrap(), None).unwrap();
 
         input_frame.clear();
         for i in 0..resampled_frame[0].len() {
