@@ -1,24 +1,37 @@
 use std::collections::HashMap;
 use std::{env, sync::Arc};
+use async_openai::Client as OpenAIClient;
+use async_openai::types::{CreateSpeechRequestArgs, Voice, SpeechModel};
+use serenity::model::id::GuildId;
 use serenity::prelude::TypeMap;
 use serenity::{client::{Client, Context, EventHandler}, 
                framework::{StandardFramework, standard::{macros::{group, command}, Args, CommandResult}},
                prelude::{GatewayIntents, Mentionable, TypeMapKey},
                model::{gateway::Ready, prelude::{Message, ChannelId}}};
+use songbird::ffmpeg;
 use songbird::model::id::UserId;
 use songbird::{EventHandler as VoiceEventHandler, EventContext, model::payload::{Speaking, ClientDisconnect}, Event, Config, driver::DecodeMode, SerenityInit, CoreEvent};
 use async_trait::async_trait;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, Mutex};
+use uuid::Uuid;
 
-use crate::listener;
+use crate::assistant::DiscordAssistant;
+use crate::{listener, sound_store};
 
 pub struct SharedState {
     pub users: HashMap<u32, mpsc::Sender<listener::ListenerEvent>>,
-    pub id_to_ssrc: HashMap<UserId, u32>
+    pub id_to_ssrc: HashMap<UserId, u32>,
+    pub tx_audio: Option<mpsc::Sender<(GuildId, AgentVoiceEvent)>>,
+    pub assistant: Arc<Mutex<DiscordAssistant>>
 }
 
 impl TypeMapKey for SharedState {
     type Value = SharedState;
+}
+
+pub enum AgentVoiceEvent {
+    Acknowledge,
+    Text(String)
 }
 
 #[group]
@@ -32,16 +45,78 @@ impl EventHandler for Handler {
     async fn ready(&self, _: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
     }
+
+    async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
+        let manager = songbird::get(&ctx)
+                .await
+                .expect("Songbird Voice client placed in at initialization.")
+                .clone();
+
+        let (tx_audio, mut rx_audio) = mpsc::channel::<(GuildId, AgentVoiceEvent)>(32);
+        //let oai_client: OpenAIClient<async_openai::config::OpenAIConfig> = OpenAIClient::new();
+
+        let mut write_guard = ctx.data.write().await;
+        if let Some(state) = write_guard.get_mut::<SharedState>() {
+            state.tx_audio = Some(tx_audio);
+        }
+
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+
+            let oai_client = OpenAIClient::new();
+
+            loop {
+                let (guild_id, event) = rx_audio.recv().await.unwrap();
+
+                match event {
+                    AgentVoiceEvent::Acknowledge => {
+                        if let Some(handler_lock) = manager.get(guild_id) {
+                            let mut handler = handler_lock.lock().await;
+                            let sound_store_lock = ctx.data.read().await.get::<sound_store::SoundStore>().cloned().expect("Sound cache was installed at startup.");
+                            let sound_store = sound_store_lock.lock().unwrap();
+                            let input = sound_store.get("acknowledge").expect("Handle placed into cache at startup.");
+
+                            handler.play_source(input.new_handle().try_into().unwrap());
+                        }
+                    },
+                    AgentVoiceEvent::Text(text) => {
+                        let voice_request: async_openai::types::CreateSpeechRequest = CreateSpeechRequestArgs::default()
+                            .input(text)
+                            .voice(Voice::Onyx)
+                            .model(SpeechModel::Tts1)
+                            .build().unwrap();
+
+                        match oai_client.audio().speech(voice_request).await {
+                            Ok(speech) => {
+                                let path = format!("../../tmp/{}.mp3", Uuid::new_v4());
+                                speech.save(path.clone()).await.unwrap();
+
+                                if let Some(handler_lock) = manager.get(guild_id) {
+                                    let mut handler = handler_lock.lock().await;
+                                    handler.play_source(ffmpeg(path).await.unwrap());
+                                }
+                            },
+                            Err(e) => {
+                                println!("{}", e.to_string());
+                            } 
+                        }
+                    }
+                }
+            }
+        });
+    }
 }
 
 struct Receiver {
-    data: Arc<RwLock<TypeMap>>
+    data: Arc<RwLock<TypeMap>>,
+    guild_id: GuildId
 }
 
 impl Receiver {
-    pub fn new(data: Arc<RwLock<TypeMap>>) -> Self{
+    pub fn new(data: Arc<RwLock<TypeMap>>, guild_id: GuildId) -> Self{
         Self{
-            data: data
+            data: data,
+            guild_id: guild_id
         }
     }
 }
@@ -61,10 +136,15 @@ impl VoiceEventHandler for Receiver {
                 let mut write_guard = self.data.write().await;
                 if let Some(state) = write_guard.get_mut::<SharedState>() {
                     if !state.users.contains_key(ssrc) {
+                        state.id_to_ssrc.insert(user_id.unwrap(), ssrc.clone());
                         let (tx_listener_event, mut rx_listener_event) = mpsc::channel::<listener::ListenerEvent>(32);
                         state.users.insert(ssrc.clone(), tx_listener_event);
+
+                        let guild_id = self.guild_id.clone();
+                        let mut tx_audio = state.tx_audio.clone().unwrap();
+                        let assistant = state.assistant.clone();
                         tokio::spawn(async move {
-                            listener::listener_loop(&mut rx_listener_event).await;
+                            listener::listener_loop(&mut rx_listener_event, guild_id, &mut tx_audio, assistant).await;
                         });
                     }
                 }
@@ -78,13 +158,13 @@ impl VoiceEventHandler for Receiver {
             },
             EventContext::VoicePacket(data) => {
                 if let Some(audio) = data.audio {
-                    println!(
-                        "Audio packet sequence {:05} has {:04} bytes (decompressed from {}), SSRC {}",
-                        data.packet.sequence.0,
-                        audio.len() * std::mem::size_of::<i16>(),
-                        data.packet.payload.len(),
-                        data.packet.ssrc,
-                    );
+                    // println!(
+                    //     "Audio packet sequence {:05} has {:04} bytes (decompressed from {}), SSRC {}",
+                    //     data.packet.sequence.0,
+                    //     audio.len() * std::mem::size_of::<i16>(),
+                    //     data.packet.payload.len(),
+                    //     data.packet.ssrc,
+                    // );
 
                     let mut write_guard: tokio::sync::RwLockWriteGuard<'_, TypeMap> = self.data.write().await;
                     if let Some(state) = write_guard.get_mut::<SharedState>() {
@@ -139,27 +219,27 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 
         handler.add_global_event(
             CoreEvent::SpeakingStateUpdate.into(),
-            Receiver::new(ctx.data.clone()),
+            Receiver::new(ctx.data.clone(), guild_id),
         );
 
         handler.add_global_event(
             CoreEvent::SpeakingUpdate.into(),
-            Receiver::new(ctx.data.clone()),
+            Receiver::new(ctx.data.clone(), guild_id),
         );
 
         handler.add_global_event(
             CoreEvent::VoicePacket.into(),
-            Receiver::new(ctx.data.clone()),
+            Receiver::new(ctx.data.clone(), guild_id),
         );
 
         handler.add_global_event(
             CoreEvent::RtcpPacket.into(),
-            Receiver::new(ctx.data.clone()),
+            Receiver::new(ctx.data.clone(), guild_id),
         );
 
         handler.add_global_event(
             CoreEvent::ClientDisconnect.into(),
-            Receiver::new(ctx.data.clone()),
+            Receiver::new(ctx.data.clone(), guild_id),
         );
 
         msg.channel_id.say(&ctx.http, &format!("Joined {}", connect_to.mention())).await.unwrap();
