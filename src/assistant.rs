@@ -1,17 +1,19 @@
-use std::{env, string};
+use std::{env, sync::{Arc, atomic::{AtomicBool, Ordering}}};
 use async_openai::{Client, types::{CreateThreadRequestArgs, CreateAssistantRequestArgs, AssistantObject, ThreadObject, CreateMessageRequestArgs, CreateRunRequestArgs, RunStatus, MessageContent}, config::OpenAIConfig};
 
+use crate::agent_speaker::AgentSpeaker;
+
 pub struct DiscordAssistant {
-    client: Client<OpenAIConfig>,
+    oai_client: Arc<Client<OpenAIConfig>>,
     thread: ThreadObject,
     assistant: AssistantObject,
-    pub busy: bool
+    pub is_in_conversation: bool,
+    speaker: AgentSpeaker,
+    is_responding: AtomicBool
 }
 
 impl DiscordAssistant {
-    pub async fn new() -> DiscordAssistant {
-        let client = Client::new();
-    
+    pub async fn new(oai_client: Arc<Client<OpenAIConfig>>, speaker: AgentSpeaker) -> DiscordAssistant {    
         let assistant_name = env::var("ASSISTANT_NAME").unwrap();
         let assistant_instructions = env::var("ASSISTANT_INSTRUCTIONS").unwrap();
         let assistant_model = env::var("ASSISTANT_MODEL").unwrap();
@@ -21,20 +23,36 @@ impl DiscordAssistant {
             .instructions(&assistant_instructions)
             .model(&assistant_model)
             .build().unwrap();
-        let assistant = client.assistants().create(assistant_request).await.unwrap();
+        let assistant = oai_client.assistants().create(assistant_request).await.unwrap();
 
         let thread_request = CreateThreadRequestArgs::default().build().unwrap();
-        let thread = client.threads().create(thread_request.clone()).await.unwrap();
+        let thread = oai_client.threads().create(thread_request.clone()).await.unwrap();
 
         DiscordAssistant {
-            client: client,
+            oai_client: oai_client,
             thread: thread,
             assistant: assistant,
-            busy: false
+            is_in_conversation: false,
+            speaker: speaker,
+            is_responding: AtomicBool::new(false)
         }
     }
 
-    pub async fn send_message(&self, message_text: &str) -> Option<String> {
+    pub fn send_message(&self, message_text: &str) {
+        tokio::spawn(async move {
+            let response = self.get_response(message_text).await;
+            match response {
+                Some(text) => {
+                    self.speaker.speak(&text);
+                },
+                None => {
+                    self.speaker.speak("Sorry, I'm a big dum guy and couldn't think of a response, tee hee!");
+                }
+            }
+        });
+    }
+
+    async fn get_response(&self, message_text: &str) -> Option<String> {
         let query = [("limit", "1")];
 
         let message = CreateMessageRequestArgs::default()
@@ -42,20 +60,20 @@ impl DiscordAssistant {
             .content(message_text)
             .build().unwrap();
 
-        self.client.threads().messages(&self.thread.id).create(message).await.unwrap();
+        self.oai_client.threads().messages(&self.thread.id).create(message).await.unwrap();
 
         let run_request = CreateRunRequestArgs::default()
             .assistant_id(&self.assistant.id)
             .build().unwrap();
 
-        let run = self.client
+        let run = self.oai_client
             .threads()
             .runs(&self.thread.id)
             .create(run_request)
             .await.unwrap();
 
         loop {
-            let run = self.client
+            let run = self.oai_client
                 .threads()
                 .runs(&self.thread.id)
                 .retrieve(&run.id)
@@ -63,7 +81,7 @@ impl DiscordAssistant {
 
             match run.status {
                 RunStatus::Completed => {
-                    let response = self.client
+                    let response = self.oai_client
                         .threads()
                         .messages(&self.thread.id)
                         .list(&query)
@@ -73,7 +91,7 @@ impl DiscordAssistant {
                         .data.get(0).unwrap()
                         .id.clone();
 
-                    let message = self.client
+                    let message = self.oai_client
                         .threads()
                         .messages(&self.thread.id)
                         .retrieve(&message_id)
@@ -119,6 +137,10 @@ impl DiscordAssistant {
 
     pub async fn flush(&mut self) {
         let thread_request = CreateThreadRequestArgs::default().build().unwrap();
-        self.thread = self.client.threads().create(thread_request.clone()).await.unwrap();
+        self.thread = self.oai_client.threads().create(thread_request.clone()).await.unwrap();
+    }
+
+    pub async fn is_responding(self) -> bool {
+        return self.is_responding.load(Ordering::SeqCst) || self.speaker.is_speaking().await;
     }
 }

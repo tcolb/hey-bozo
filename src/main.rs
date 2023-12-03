@@ -2,7 +2,7 @@ mod assistant;
 mod discord;
 mod listener;
 mod sound_store;
-mod speaker;
+mod agent_speaker;
 
 use std::{collections::HashMap, sync::Arc};
 use dotenv::dotenv;
