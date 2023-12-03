@@ -21,7 +21,6 @@ pub enum ListenerEvent {
 pub async fn listener_loop(
     rx_48khz: &mut mpsc::Receiver<ListenerEvent>,
     guild_id: GuildId, 
-    tx_audio: &mut mpsc::Sender<(GuildId, AgentVoiceEvent)>, 
     assistant: Arc<Mutex<DiscordAssistant>>) {
 
     let porcupine = init_porcupine();
@@ -103,7 +102,7 @@ pub async fn listener_loop(
                 println!("final sentence: {}", total_transcript);
 
                 let mut guard = assistant.lock().await;
-                assert!(guard.busy);
+                assert!(guard.is_in_conversation);
                 match guard.send_message(&total_transcript).await {
                     Some(response) => {
                         tx_audio.send((guild_id, AgentVoiceEvent::Text(response))).await.unwrap();
@@ -111,11 +110,11 @@ pub async fn listener_loop(
 
                         // TODO fix this
                         speech_to_text = false;
-                        guard.busy = false;
+                        guard.is_in_conversation = false;
                     },
                     None => {
                         speech_to_text = false;
-                        guard.busy = false;
+                        guard.is_in_conversation = false;
                     }
                 }
                 // let mut path1 = std::env::current_dir().expect("Couldn't get CWD!");
@@ -142,8 +141,8 @@ pub async fn listener_loop(
 
                         // Only one person can talk to the assistant at a time!
                         if let Ok(mut guard) = assistant.try_lock() {
-                            if !guard.busy {
-                                guard.busy = true;
+                            if !guard.is_in_conversation {
+                                guard.is_in_conversation = true;
                                 guard.flush().await;
                                 speech_to_text = true;
                                 tx_audio.send((guild_id, AgentVoiceEvent::Acknowledge)).await.unwrap();

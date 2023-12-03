@@ -21,17 +21,11 @@ use crate::{listener, sound_store};
 pub struct SharedState {
     pub users: HashMap<u32, mpsc::Sender<listener::ListenerEvent>>,
     pub id_to_ssrc: HashMap<UserId, u32>,
-    pub tx_audio: Option<mpsc::Sender<(GuildId, AgentVoiceEvent)>>,
     pub assistant: Arc<Mutex<DiscordAssistant>>
 }
 
 impl TypeMapKey for SharedState {
     type Value = SharedState;
-}
-
-pub enum AgentVoiceEvent {
-    Acknowledge,
-    Text(String)
 }
 
 #[group]
@@ -141,7 +135,6 @@ impl VoiceEventHandler for Receiver {
                         state.users.insert(ssrc.clone(), tx_listener_event);
 
                         let guild_id = self.guild_id.clone();
-                        let mut tx_audio = state.tx_audio.clone().unwrap();
                         let assistant = state.assistant.clone();
                         tokio::spawn(async move {
                             listener::listener_loop(&mut rx_listener_event, guild_id, &mut tx_audio, assistant).await;
