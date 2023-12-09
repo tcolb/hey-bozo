@@ -1,21 +1,30 @@
 use std::{sync::{Arc, Mutex}, collections::HashMap};
 
-use songbird::{input::{cached::Memory}, ffmpeg, typemap::TypeMapKey};
+use songbird::{input::cached::Memory, ffmpeg, typemap::TypeMapKey};
 
-pub struct SoundStore;
+pub type SoundStore = HashMap<String, Memory>;
 
-impl TypeMapKey for SoundStore {
-    type Value = Arc<Mutex<HashMap<String, Memory>>>;
+pub struct SoundStoreKey {
+}
+
+impl TypeMapKey for SoundStoreKey {
+    type Value = Arc<Mutex<SoundStore>>;
 }
 
 pub async fn init_sound_store() -> HashMap<String, Memory> {
     let mut audio_map = HashMap::new();
 
-    let ting_src = Memory::new(
+    let acknowledge_src = Memory::new(
         ffmpeg("D:/Dev/hey-bozo/resources/openai_onyx_what_loser.mp3").await.unwrap(),
     ).unwrap();
-    let _ = ting_src.raw.spawn_loader();
-    audio_map.insert("acknowledge".into(), ting_src);
+    let _ = acknowledge_src.raw.spawn_loader();
+    audio_map.insert("acknowledge".into(), acknowledge_src);
+
+    let ping_src = Memory::new(
+        ffmpeg("D:/Dev/hey-bozo/resources/657947__matrixxx__horror-inspect-sound-ui-or-in-game-notification-01.mp3").await.unwrap(),
+    ).unwrap();
+    let _ = ping_src.raw.spawn_loader();
+    audio_map.insert("ping".into(), ping_src);
 
     audio_map
 }

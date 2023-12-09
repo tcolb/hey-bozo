@@ -8,7 +8,7 @@ pub struct DiscordAssistant {
     thread: ThreadObject,
     assistant: AssistantObject,
     pub is_in_conversation: bool,
-    speaker: AgentSpeaker,
+    pub speaker: AgentSpeaker,
     is_responding: AtomicBool
 }
 
@@ -38,18 +38,17 @@ impl DiscordAssistant {
         }
     }
 
-    pub fn send_message(&self, message_text: &str) {
-        tokio::spawn(async move {
-            let response = self.get_response(message_text).await;
-            match response {
-                Some(text) => {
-                    self.speaker.speak(&text);
-                },
-                None => {
-                    self.speaker.speak("Sorry, I'm a big dum guy and couldn't think of a response, tee hee!");
-                }
+    pub async fn send_message(&mut self, message_text: &str) {
+        self.is_responding.store(true, Ordering::SeqCst);
+        match self.get_response(message_text).await {
+            Some(text) => {
+                self.speaker.speak(&text);
+            },
+            None => {
+                self.speaker.speak("Sorry, I'm a big dum guy and couldn't think of a response, tee hee!");
             }
-        });
+        }
+        self.is_responding.store(false, Ordering::SeqCst);
     }
 
     async fn get_response(&self, message_text: &str) -> Option<String> {
@@ -134,13 +133,17 @@ impl DiscordAssistant {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
-
+    
     pub async fn flush(&mut self) {
         let thread_request = CreateThreadRequestArgs::default().build().unwrap();
         self.thread = self.oai_client.threads().create(thread_request.clone()).await.unwrap();
     }
 
-    pub async fn is_responding(self) -> bool {
+    pub async fn is_responding(&self) -> bool {
         return self.is_responding.load(Ordering::SeqCst) || self.speaker.is_speaking().await;
+    }
+
+    pub async fn stop(&self) {
+        self.speaker.stop().await;
     }
 }
