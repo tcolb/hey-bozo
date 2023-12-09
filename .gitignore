@@ -1,4 +1,4 @@
 /target
-/resources/output
+/output
 .vscode
 .env

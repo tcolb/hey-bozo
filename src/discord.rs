@@ -16,11 +16,11 @@ use tokio::sync::{RwLock, mpsc, Mutex};
 
 use crate::agent_speaker::AgentSpeaker;
 use crate::assistant::DiscordAssistant;
-use crate::listener;
+use crate::{listener, resampler};
 use crate::sound_store::SoundStore;
 
 pub struct SharedState {
-    pub users: HashMap<u32, mpsc::Sender<listener::ListenerEvent>>,
+    pub users: HashMap<u32, mpsc::Sender<resampler::ListenerEvent>>,
     pub id_to_ssrc: HashMap<UserId, u32>,
     pub oai_client: Arc<OpenAIClient<OpenAIConfig>>,
     pub sound_store: Arc<SyncMutex<SoundStore>>
@@ -80,12 +80,12 @@ impl VoiceEventHandler for Receiver {
                 if let Some(state) = write_guard.get_mut::<SharedState>() {
                     if !state.users.contains_key(ssrc) {
                         state.id_to_ssrc.insert(user_id.unwrap(), ssrc.clone());
-                        let (tx_listener_event, mut rx_listener_event) = mpsc::channel::<listener::ListenerEvent>(32);
+                        let (tx_listener_event, mut rx_listener_event) = mpsc::channel::<resampler::ListenerEvent>(32);
                         state.users.insert(ssrc.clone(), tx_listener_event);
 
                         let assistant = self.assistant.clone();
                         tokio::spawn(async move {
-                            listener::listener_loop(&mut rx_listener_event, assistant).await;
+                            listener::listener_loop(rx_listener_event, assistant).await;
                         });
                     }
                 }
@@ -110,7 +110,7 @@ impl VoiceEventHandler for Receiver {
                     let mut write_guard: tokio::sync::RwLockWriteGuard<'_, TypeMap> = self.data.write().await;
                     if let Some(state) = write_guard.get_mut::<SharedState>() {
                         if let Some(tx) = state.users.get(&data.packet.ssrc) {
-                            tx.send(listener::ListenerEvent::AudioPacket(audio.clone())).await.unwrap();
+                            tx.send(resampler::ListenerEvent::AudioPacket(audio.clone())).await.unwrap();
                         }
                     }
                 } else {
@@ -123,7 +123,7 @@ impl VoiceEventHandler for Receiver {
                 if let Some(state) = write_guard.get_mut::<SharedState>() {
                     if let Some(ssrc) = state.id_to_ssrc.get(user_id) {
                         if let Some(tx) = state.users.get(ssrc) {
-                            tx.send(listener::ListenerEvent::Disconnect).await.unwrap();
+                            tx.send(resampler::ListenerEvent::Disconnect).await.unwrap();
                         }
                     }
                 }
