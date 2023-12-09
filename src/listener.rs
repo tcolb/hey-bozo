@@ -1,5 +1,4 @@
 use std::{env, collections::VecDeque, time::Duration, sync::Arc};
-use serenity::model::id::GuildId;
 use tokio::{sync::{mpsc, Mutex}, time::{timeout, Instant}};
 //use wav::WAV_FORMAT_PCM;
 //use std::fs::OpenOptions;
@@ -11,7 +10,7 @@ use rubato::{Resampler, SincFixedOut, SincInterpolationType, SincInterpolationPa
 use cheetah::{CheetahBuilder, Cheetah};
 use porcupine::{PorcupineBuilder, Porcupine};
 
-use crate::{discord::AgentVoiceEvent, assistant::DiscordAssistant};
+use crate::assistant::DiscordAssistant;
 
 pub enum ListenerEvent {
     AudioPacket(Vec<i16>),
@@ -20,7 +19,6 @@ pub enum ListenerEvent {
 
 pub async fn listener_loop(
     rx_48khz: &mut mpsc::Receiver<ListenerEvent>,
-    guild_id: GuildId, 
     assistant: Arc<Mutex<DiscordAssistant>>) {
 
     let porcupine = init_porcupine();
@@ -48,12 +46,14 @@ pub async fn listener_loop(
     let mut buf = VecDeque::with_capacity(porcupine.frame_length() as usize * 2);
     let mut input_frame = Vec::<i16>::with_capacity(porcupine.frame_length() as  usize);
 
-    let mut speech_to_text = false;
     let mut total_transcript = String::new();
-
     // TODO remove
     //let mut cringe = Vec::<i16>::with_capacity(16_000 * 10);
 
+    let mut speech_to_text = false;
+    // Track when the user is waiting for the agent to finish responding.
+    // Once the agent has finished responding, start measuring silence to cancel the conversation.
+    let mut awaiting_agent_response = false;
     let mut silence = Instant::now();
 
     // Consume packets
@@ -68,6 +68,7 @@ pub async fn listener_loop(
 
         let resampled_frame = resampler.process(&frames.unwrap(), None).unwrap();
 
+        // Stereo to mono
         input_frame.clear();
         for i in 0..resampled_frame[0].len() {
             let l = resampled_frame[0][i];
@@ -76,24 +77,47 @@ pub async fn listener_loop(
             input_frame.push((v * 32768.0).clamp(-32768.0, 32768.0) as i16);
         }
 
+
+
         if speech_to_text {
 
             // TODO remove
             //cringe.extend(input_frame.clone());
             
-            // User hasn't said anything for 3seconds, end the convo.
             let partial_transcript = cheetah.process(&input_frame).unwrap();
-            // if partial_transcript.transcript.is_empty() && silence.elapsed() > Duration::from_millis(3000) {
-            //     let mut guard = assistant.lock().await;
-            //     assert!(guard.busy);
-            //     guard.busy = false;
-            //     speech_to_text = false;
-            //     println!("user stopped talking, ending...");
-            //     continue;
-            // }
+
+            if awaiting_agent_response {
+                let agent_responding = {
+                    let guard = assistant.lock().await;
+                    guard.is_responding().await
+                };
+
+                if !agent_responding {
+                    silence = Instant::now();
+                    awaiting_agent_response = false;
+                }
+            }
+
+            if partial_transcript.transcript.is_empty() {
+                if silence.elapsed() > Duration::from_millis(3000) {
+                    // User hasn't said anything for 3seconds, end the convo.
+                    // TODO
+                    // let mut guard = assistant.lock().await;
+                    // if !guard.is_responding().await {
+                    //     assert!(guard.is_in_conversation);
+                    //     awaiting_agent_response = false;
+                    //     speech_to_text = false;
+                    //     guard.is_in_conversation = false;
+                    //     println!("user stopped talking, ending...");
+                    //     continue;
+                    // }
+                }
+            }     
+            else {
+                silence = Instant::now();
+            }       
 
             total_transcript.push_str(&partial_transcript.transcript);
-            silence = Instant::now();
 
             if partial_transcript.is_endpoint {
                 let final_transcript = cheetah.flush().unwrap();
@@ -101,21 +125,28 @@ pub async fn listener_loop(
 
                 println!("final sentence: {}", total_transcript);
 
-                let mut guard = assistant.lock().await;
+                let guard: tokio::sync::MutexGuard<'_, DiscordAssistant> = assistant.lock().await;
                 assert!(guard.is_in_conversation);
-                match guard.send_message(&total_transcript).await {
-                    Some(response) => {
-                        tx_audio.send((guild_id, AgentVoiceEvent::Text(response))).await.unwrap();
-                        total_transcript.clear();
 
-                        // TODO fix this
-                        speech_to_text = false;
-                        guard.is_in_conversation = false;
-                    },
-                    None => {
-                        speech_to_text = false;
-                        guard.is_in_conversation = false;
+                if guard.is_responding().await {
+                    // TODO less naive version
+                    if total_transcript.contains("stop") {
+                        let guard = assistant.lock().await;
+                        guard.stop().await;
                     }
+                } else {
+                    awaiting_agent_response = true;
+
+                    // Play waiting sound
+                    guard.speaker.start_ping().await;
+
+                    // Prompt the agent and respond
+                    let assistant = assistant.clone();
+                    let speaker_transcript = total_transcript.clone();
+                    tokio::spawn(async move {
+                        let mut guard: tokio::sync::MutexGuard<'_, DiscordAssistant> = assistant.lock().await;
+                        guard.send_message(&speaker_transcript).await;
+                    });
                 }
                 // let mut path1 = std::env::current_dir().expect("Couldn't get CWD!");
                 // path1.push("resources");
@@ -128,8 +159,7 @@ pub async fn listener_loop(
                 // let header1 = wav::Header::new(WAV_FORMAT_PCM, 1, porcupine.sample_rate(), 16);
                 // wav::write(header1, &bit_depth, &mut file1).unwrap();
             }
-        }
-        else {
+        } else {
             // Listening in for the trigger word.
             match porcupine.process(&input_frame) {
                 Ok(keyword_index) => {
@@ -144,8 +174,10 @@ pub async fn listener_loop(
                             if !guard.is_in_conversation {
                                 guard.is_in_conversation = true;
                                 guard.flush().await;
+                                guard.speaker.acknowledge().await;
+
                                 speech_to_text = true;
-                                tx_audio.send((guild_id, AgentVoiceEvent::Acknowledge)).await.unwrap();
+                                awaiting_agent_response = false;
                                 silence = Instant::now();
                             }
                         }
