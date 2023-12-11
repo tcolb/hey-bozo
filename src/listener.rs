@@ -40,7 +40,6 @@ pub async fn listener_loop(
         }
 
         if speech_to_text {
-
             // TODO remove
             //cringe.extend(input_frame.clone());
             
@@ -61,7 +60,7 @@ pub async fn listener_loop(
             if partial_transcript.transcript.is_empty() {
                 if silence.elapsed() > Duration::from_millis(3000) {
                     // User hasn't said anything for 3seconds, end the convo.
-                    // TODO
+                    //TODO
                     // let mut guard = assistant.lock().await;
                     // if !guard.is_responding().await {
                     //     assert!(guard.is_in_conversation);
@@ -73,9 +72,6 @@ pub async fn listener_loop(
                     // }
                 }
             }     
-            else {
-                silence = Instant::now();
-            }       
 
             total_transcript.push_str(&partial_transcript.transcript);
 
@@ -90,7 +86,7 @@ pub async fn listener_loop(
 
                 if guard.is_responding().await {
                     // TODO less naive version
-                    if total_transcript.contains("stop") {
+                    if total_transcript.ends_with("stop") {
                         let guard = assistant.lock().await;
                         guard.stop().await;
                     }

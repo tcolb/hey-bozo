@@ -727,6 +727,7 @@ dependencies = [
  "async-trait",
  "dotenv",
  "pv_cheetah",
+ "pv_cobra",
  "pv_porcupine",
  "ringbuf",
  "rubato",
@@ -1275,6 +1276,17 @@ checksum = "2924b4d578bab4f12bc6137e353f39514b382e4c5fdc8511e570d1fbd582eab5"
 dependencies = [
  "libc",
  "libloading",
+]
+
+[[package]]
+name = "pv_cobra"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58ea0cf9cfb85e073b5ff16739a0f409c2d47be3af9ccc1c55c0d5f5eb6c519d"
+dependencies = [
+ "libc",
+ "libloading",
+ "log",
 ]
 
 [[package]]
