@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::{env, sync::{Arc, Mutex as SyncMutex}};
 use async_openai::Client as OpenAIClient;
 use async_openai::config::OpenAIConfig;
-use serenity::model::id::GuildId;
 use serenity::prelude::TypeMap;
 use serenity::{client::{Client, Context, EventHandler}, 
                framework::{StandardFramework, standard::{macros::{group, command}, Args, CommandResult}},
@@ -41,13 +40,6 @@ impl EventHandler for Handler {
     async fn ready(&self, _: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
     }
-
-    async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
-        let manager = songbird::get(&ctx)
-                .await
-                .expect("Songbird Voice client placed in at initialization.")
-                .clone();
-    }
 }
 
 struct Receiver {
@@ -80,7 +72,7 @@ impl VoiceEventHandler for Receiver {
                 if let Some(state) = write_guard.get_mut::<SharedState>() {
                     if !state.users.contains_key(ssrc) {
                         state.id_to_ssrc.insert(user_id.unwrap(), ssrc.clone());
-                        let (tx_listener_event, mut rx_listener_event) = mpsc::channel::<resampler::ListenerEvent>(32);
+                        let (tx_listener_event, rx_listener_event) = mpsc::channel::<resampler::ListenerEvent>(32);
                         state.users.insert(ssrc.clone(), tx_listener_event);
 
                         let assistant = self.assistant.clone();
