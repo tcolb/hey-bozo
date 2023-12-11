@@ -1,5 +1,5 @@
 use std::{env, sync::{Arc, atomic::{AtomicBool, Ordering}}};
-use async_openai::{Client, types::{CreateThreadRequestArgs, CreateAssistantRequestArgs, AssistantObject, ThreadObject, CreateMessageRequestArgs, CreateRunRequestArgs, RunStatus, MessageContent}, config::OpenAIConfig};
+use async_openai::{Client, types::{CreateThreadRequestArgs, CreateAssistantRequestArgs, AssistantObject, ThreadObject, CreateMessageRequestArgs, CreateRunRequestArgs, RunStatus, MessageContent, CreateTranscriptionRequestArgs, AudioInput}, config::OpenAIConfig};
 
 use crate::agent_speaker::AgentSpeaker;
 
@@ -145,5 +145,15 @@ impl DiscordAssistant {
 
     pub async fn stop(&self) {
         self.speaker.stop().await;
+    }
+
+    pub async fn speech_to_text(&self, audio_input: AudioInput) -> String {
+        let request = CreateTranscriptionRequestArgs::default()
+            .file(audio_input)
+            .model("whisper-1")
+            .build().unwrap();
+
+        let response = self.oai_client.audio().transcribe(request).await.unwrap();
+        return response.text;
     }
 }
