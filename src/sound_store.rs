@@ -21,7 +21,7 @@ pub async fn init_sound_store() -> HashMap<String, Memory> {
     audio_map.insert("acknowledge".into(), acknowledge_src);
 
     let ping_src = Memory::new(
-        ffmpeg("D:/Dev/hey-bozo/resources/657947__matrixxx__horror-inspect-sound-ui-or-in-game-notification-01.mp3").await.unwrap(),
+        ffmpeg("D:/Dev/hey-bozo/resources/ping.mp3").await.unwrap(),
     ).unwrap();
     let _ = ping_src.raw.spawn_loader();
     audio_map.insert("ping".into(), ping_src);
