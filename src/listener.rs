@@ -29,7 +29,7 @@ pub async fn listener_loop(
     let mut input_frame = Vec::<i16>::with_capacity(porcupine.frame_length() as  usize);
 
     let mut conversation_state = ConversationState::Detection;
-    let mut time_not_speaking = Instant::now();
+    let mut time_not_speaking = None;
     let mut transcription_audio = Vec::<i16>::default();
 
     loop {
@@ -56,7 +56,7 @@ pub async fn listener_loop(
                                     guard.speaker.acknowledge().await;
 
                                     conversation_state = ConversationState::Listening;
-                                    time_not_speaking = Instant::now();
+                                    time_not_speaking = Some(Instant::now());
                                     transcription_audio.clear();
                                 }
                             }
@@ -73,41 +73,48 @@ pub async fn listener_loop(
                 transcription_audio.append(&mut input_frame);
 
                 if speaking_confidence < 0.75 {
-                    time_not_speaking = Instant::now();
+                    if time_not_speaking.is_none() {
+                        time_not_speaking = Some(Instant::now());
+                    }
+                }
+                else {
+                    time_not_speaking = None;
                 }
 
-                if time_not_speaking.elapsed() >= Duration::from_secs(3) {
-                    conversation_state = ConversationState::Responding;
-
-                    let guard: tokio::sync::MutexGuard<'_, DiscordAssistant> = assistant.lock().await;
-                    assert!(guard.is_in_conversation);
-
-                    // Play waiting sound
-                    guard.speaker.start_ping().await;
+                if let Some(time_not_speaking) = time_not_speaking {
+                    if time_not_speaking.elapsed() >= Duration::from_secs(3) {
     
-                    // Prompt the agent and respond
-                    let transcription_buf = transcription_audio.clone();
-                    let assistant = assistant.clone();
-                    tokio::spawn(async move {
+                        let guard: tokio::sync::MutexGuard<'_, DiscordAssistant> = assistant.lock().await;
+                        assert!(guard.is_in_conversation);
+    
+                        // Play waiting sound
+                        guard.speaker.start_ping().await;
+        
+                        let transcription_buf = transcription_audio.clone();
+
+                        transcription_audio.clear();
+                        conversation_state = ConversationState::Responding;
+
+                        // Prompt the agent and respond
                         let mut bytes = Cursor::new(vec![]);
                         let bit_depth = wav::bit_depth::BitDepth::Sixteen(transcription_buf);
-                        let header1 = wav::Header::new(WAV_FORMAT_PCM, 1, sample_rate, 16);
-                        wav::write(header1, &bit_depth, &mut bytes).unwrap();
-
-                        let audio_input: AudioInput = AudioInput::from_bytes("filename".into(), bytes::Bytes::from(bytes.into_inner()));
-            
-                        let mut guard: tokio::sync::MutexGuard<'_, DiscordAssistant> = assistant.lock().await;
-                        let transcription_text = guard.speech_to_text(audio_input).await;
-                        guard.send_message(&transcription_text).await;
-                    });
-
-                    transcription_audio.clear();
+                        let header = wav::Header::new(WAV_FORMAT_PCM, 1, sample_rate, 16);
+                        wav::write(header, &bit_depth, &mut bytes).unwrap();
+                        let audio_input: AudioInput = AudioInput::from_bytes("dummy.wav".into(), bytes::Bytes::from(bytes.into_inner()));
+                        let assistant = assistant.clone();
+                        tokio::spawn(async move {
+                            let mut guard: tokio::sync::MutexGuard<'_, DiscordAssistant> = assistant.lock().await;
+                            guard.send_message(audio_input).await;
+                        });
+    
+                    }
                 }
             },
             ConversationState::Responding => {
                 let guard = assistant.lock().await;
                 if !guard.is_responding().await {
                     conversation_state = ConversationState::Listening;
+                    time_not_speaking = None;
                 }
             }
         }

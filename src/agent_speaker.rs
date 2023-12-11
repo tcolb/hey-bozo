@@ -13,11 +13,6 @@ use uuid::Uuid;
 
 use crate::sound_store::SoundStore;
 
-pub enum SpeechType {
-    Acknowledge,
-    Text(String)
-}
-
 pub struct AgentSpeaker {
     songbird: Arc<Songbird>,
     guild_id: GuildId,
@@ -83,7 +78,7 @@ impl AgentSpeaker {
         let mut songbird_guard = songbird_lock.lock().await;
 
         if let Ok(song_store) = self.sound_store.lock() {
-            if let Some(memory) = song_store.get("acknowledge") {
+            if let Some(memory) = song_store.get("ping") {
                 let (mut track, _handle) = create_player(memory.new_handle().try_into().unwrap());
                 track.set_loops(LoopState::Infinite).unwrap();
                 songbird_guard.play_only(track);
@@ -99,9 +94,5 @@ impl AgentSpeaker {
             }
         }
         return false;
-    }
-
-    pub async fn stop(&self) {
-
     }
 }
