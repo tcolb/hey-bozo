@@ -725,6 +725,7 @@ version = "0.1.0"
 dependencies = [
  "async-openai",
  "async-trait",
+ "bytes",
  "dotenv",
  "pv_cheetah",
  "pv_cobra",

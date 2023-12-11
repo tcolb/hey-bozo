@@ -25,7 +25,7 @@ impl Resampler {
             window: WindowFunction::BlackmanHarris2,
         };
     
-        let mut resampler = SincFixedOut::<f64>::new(
+        let resampler = SincFixedOut::<f64>::new(
             sample_rate / 48_000 as f64,
             2.0,
             resampler_params,
@@ -36,7 +36,7 @@ impl Resampler {
         Self {
             rx: rx,
             buf: VecDeque::with_capacity(frame_length * 2),
-            channels: 2,
+            channels: channels,
             resampler: resampler
         }
     }
