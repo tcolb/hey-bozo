@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::{env, sync::{Arc, Mutex as SyncMutex}};
 use async_openai::Client as OpenAIClient;
 use async_openai::config::OpenAIConfig;
+use serenity::model::guild::Guild;
+use serenity::model::user::User;
 use serenity::prelude::TypeMap;
 use serenity::{client::{Client, Context, EventHandler}, 
                framework::{StandardFramework, standard::{macros::{group, command}, Args, CommandResult}},
@@ -33,7 +35,7 @@ impl TypeMapKey for SharedState {
 }
 
 #[group]
-#[commands(join, leave)]
+#[commands(bozo, unbozo)]
 struct General;
 
 struct Handler;
@@ -140,16 +142,29 @@ impl VoiceEventHandler for Receiver {
     }
 }
 
+async fn find_channel_from_user(ctx: &Context, user: &User, guild: Guild) -> Option<ChannelId> {
+    for (channel_id, channel) in guild.channels {
+        if let Some(guild_channel) = channel.guild() {
+            if let Ok(members) = guild_channel.members(&ctx.cache).await {
+                for member in members {
+                    if member.user.id == user.id {
+                        return Some(channel_id.clone());
+                    }
+                }
+            }
+        }
+    }
+    return None;
+}
+
 #[command]
 #[only_in(guilds)]
-async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-    let connect_to = match args.single::<u64>() {
-        Ok(id) => ChannelId(id),
-        Err(_) => {
-            msg.reply(ctx, "Requires a valid voice channel ID be given").await?;
-            return Ok(());
-        },
-    };
+async fn bozo(ctx: &Context, msg: &Message, mut _args: Args) -> CommandResult {
+    let channel_id = find_channel_from_user(&ctx, &msg.author, msg.guild(&ctx.cache).unwrap()).await;
+    if channel_id.is_none() {
+        msg.reply(ctx, "Error finding channel ID!").await?;
+        return Ok(());
+    }
 
     let manager = songbird::get(ctx).await
         .expect("Songbird Voice client placed in at initialization.").clone();
@@ -167,7 +182,7 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
         }
     };
 
-    let (handler_lock, conn_result) = manager.join(guild.id, connect_to).await;
+    let (handler_lock, conn_result) = manager.join(guild.id, channel_id.unwrap()).await;
 
     if let Ok(_) = conn_result {
         // NOTE: this skips listening for the actual connection result.
@@ -198,7 +213,7 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
             Receiver::new(ctx.data.clone(), assistant.clone()),
         );
 
-        msg.channel_id.say(&ctx.http, &format!("Joined {}", connect_to.mention())).await.unwrap();
+        msg.channel_id.say(&ctx.http, &format!("Joined {}", channel_id.unwrap().mention())).await.unwrap();
     } else {
         msg.channel_id.say(&ctx.http, "Error joining the channel").await.unwrap();
     }
@@ -208,7 +223,7 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 
 #[command]
 #[only_in(guilds)]
-async fn leave(ctx: &Context, msg: &Message) -> CommandResult {
+async fn unbozo(ctx: &Context, msg: &Message) -> CommandResult {
     let guild = msg.guild(&ctx.cache).unwrap();
     let guild_id = guild.id;
 
