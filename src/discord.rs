@@ -14,8 +14,9 @@ use async_trait::async_trait;
 use tokio::sync::{RwLock, mpsc, Mutex, broadcast};
 
 use crate::action_handler::action_handler_loop;
+use crate::actions::AssistantAction;
 use crate::agent_speaker::AgentSpeaker;
-use crate::assistant::{DiscordAssistant, AssistantAction};
+use crate::assistant::DiscordAssistant;
 use crate::{listener, resampler};
 use crate::sound_store::SoundStore;
 

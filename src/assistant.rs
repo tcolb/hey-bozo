@@ -9,27 +9,7 @@ use async_openai::{Client, types::{CreateTranscriptionRequestArgs,
 use serde_json::Value;
 use tokio::sync::broadcast;
 
-use crate::agent_speaker::AgentSpeaker;
-
-#[derive(Clone)]
-#[derive(Debug)]
-pub enum AssistantAction {
-    MusicBot(MusicBotAction)
-}
-
-#[derive(Clone)]
-#[derive(Debug)]
-pub enum MusicBotAction {
-    Summon,
-    Dismiss,
-    Request(String),
-    Skip,
-    Shuffle,
-    Loop,
-    Clear,
-    BassBoost,
-    PlayPlaylist(String)
-}
+use crate::{agent_speaker::AgentSpeaker, actions::{AssistantAction, MusicBotAction}};
 
 pub struct DiscordAssistant {
     oai_client: Arc<Client<OpenAIConfig>>,
