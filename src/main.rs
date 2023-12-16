@@ -4,10 +4,12 @@ mod listener;
 mod sound_store;
 mod agent_speaker;
 mod resampler;
+mod action_handler;
 
 use std::{collections::HashMap, sync::Arc};
 use async_openai::Client;
 use dotenv::dotenv;
+use tokio::sync::broadcast;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() {
@@ -16,6 +18,7 @@ async fn main() {
     
     let mut client = discord::init_serenity().await;
 
+    let (action_tx, _) = broadcast::channel(16);
     let sound_store = sound_store::init_sound_store().await;
     {
         // Initialize shared state.
@@ -24,7 +27,8 @@ async fn main() {
             users: HashMap::default(),
             id_to_ssrc: HashMap::default(),
             oai_client: Arc::new(Client::new()),
-            sound_store: std::sync::Arc::new(std::sync::Mutex::new(sound_store))
+            sound_store: std::sync::Arc::new(std::sync::Mutex::new(sound_store)),
+            action_channel_tx: action_tx.clone()
         });
     };
 
@@ -33,9 +37,7 @@ async fn main() {
     //     data.insert::<sound_store::SoundStore>(std::sync::Arc::new(std::sync::Mutex::new(sound_store)));
     // }
 
-    let discord_handle = tokio::spawn(async move {
+    tokio::join!(async move {
         client.start().await.expect("Error in serenity client!");
     });
-
-    discord_handle.await.unwrap();
 }

@@ -15,7 +15,7 @@ pub async fn init_sound_store() -> HashMap<String, Memory> {
     let mut audio_map = HashMap::new();
 
     let acknowledge_src = Memory::new(
-        ffmpeg("D:/Dev/hey-bozo/resources/openai_onyx_what_loser.mp3").await.unwrap(),
+        ffmpeg("D:/Dev/hey-bozo/resources/openai_onyx_huh.mp3").await.unwrap(),
     ).unwrap();
     let _ = acknowledge_src.raw.spawn_loader();
     audio_map.insert("acknowledge".into(), acknowledge_src);

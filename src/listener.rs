@@ -16,7 +16,8 @@ enum ConversationState {
 
 pub async fn listener_loop(
     rx_48khz: mpsc::Receiver<ListenerEvent>,
-    assistant: Arc<Mutex<DiscordAssistant>>) {
+    assistant: Arc<Mutex<DiscordAssistant>>,
+    ssrc: u32) {
 
     let porcupine = init_porcupine();
     let cobra: Cobra = init_cobra();
@@ -29,7 +30,8 @@ pub async fn listener_loop(
     let mut input_frame = Vec::<i16>::with_capacity(porcupine.frame_length() as  usize);
 
     let mut conversation_state = ConversationState::Detection;
-    let mut time_not_speaking = None;
+    let mut time_listening: Option<Instant> = None;
+    let mut time_not_speaking: Option<Instant> = None;
     let mut transcription_audio = Vec::<i16>::default();
 
     loop {
@@ -50,13 +52,13 @@ pub async fn listener_loop(
 
                             // Only one person can talk to the assistant at a time!
                             if let Ok(mut guard) = assistant.try_lock() {
-                                if !guard.is_in_conversation {
-                                    guard.is_in_conversation = true;
+                                if guard.try_grab_attention(ssrc) {
                                     guard.flush().await;
                                     guard.speaker.acknowledge().await;
 
                                     conversation_state = ConversationState::Listening;
-                                    time_not_speaking = Some(Instant::now());
+                                    println!("listening");
+                                    time_not_speaking = None;
                                     transcription_audio.clear();
                                 }
                             }
@@ -68,7 +70,6 @@ pub async fn listener_loop(
                 }
             },
             ConversationState::Listening => {
-
                 let speaking_confidence = cobra.process(&input_frame).unwrap();
                 transcription_audio.append(&mut input_frame);
 
@@ -81,19 +82,34 @@ pub async fn listener_loop(
                     time_not_speaking = None;
                 }
 
-                if let Some(time_not_speaking) = time_not_speaking {
-                    if time_not_speaking.elapsed() >= Duration::from_secs(3) {
-    
+                if let Some(time_not_speaking_instant) = time_not_speaking {
+                    if time_not_speaking_instant.elapsed() >= Duration::from_secs(3) {
+
+                        if let Some(time_listening_instant) = time_listening {
+                            let listening_speaking_delta = time_listening_instant.elapsed() - time_not_speaking_instant.elapsed();
+                            if listening_speaking_delta.as_millis() < 500 {
+                                conversation_state = ConversationState::Detection;
+                                println!("detection");
+                                transcription_audio.clear();
+                                time_not_speaking = None;
+                                time_listening = None;
+                                let mut guard: tokio::sync::MutexGuard<'_, DiscordAssistant> = assistant.lock().await;
+                                guard.try_clear_attention(ssrc);
+                                continue;
+                            }
+                        }
+
+                        conversation_state = ConversationState::Responding;
+                        println!("responding");
+
                         let guard: tokio::sync::MutexGuard<'_, DiscordAssistant> = assistant.lock().await;
-                        assert!(guard.is_in_conversation);
+                        guard.set_responding();
     
                         // Play waiting sound
                         guard.speaker.start_ping().await;
         
                         let transcription_buf = transcription_audio.clone();
-
                         transcription_audio.clear();
-                        conversation_state = ConversationState::Responding;
 
                         // Prompt the agent and respond
                         let mut bytes = Cursor::new(vec![]);
@@ -113,8 +129,22 @@ pub async fn listener_loop(
             ConversationState::Responding => {
                 let guard = assistant.lock().await;
                 if !guard.is_responding().await {
-                    conversation_state = ConversationState::Listening;
                     time_not_speaking = None;
+                    time_listening = Some(Instant::now());
+                    transcription_audio.clear();
+
+                    match guard.get_attention_id() {
+                        Some(id) => {
+                            assert!(id == ssrc);
+                            conversation_state = ConversationState::Listening;
+                            println!("listening");
+                        },
+                        None => {
+                            // We lost the bots attention, likely the bot has finished the conversation.
+                            conversation_state = ConversationState::Detection;
+                            println!("detection");
+                        }
+                    }
                 }
             }
         }
