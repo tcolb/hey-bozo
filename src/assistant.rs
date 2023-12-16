@@ -5,18 +5,20 @@ use async_openai::{Client, types::{CreateTranscriptionRequestArgs,
                                     CreateChatCompletionRequestArgs,
                                     ChatCompletionRequestMessage,
                                     ChatCompletionRequestUserMessageArgs,
-                                    ChatCompletionRequestAssistantMessageArgs, ChatCompletionFunctions, FinishReason, ChatChoice, ChatCompletionMessageToolCall, FunctionCall}, config::OpenAIConfig};
+                                    ChatCompletionRequestAssistantMessageArgs, ChatCompletionFunctions, FinishReason, ChatChoice, FunctionCall}, config::OpenAIConfig};
 use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::agent_speaker::AgentSpeaker;
 
 #[derive(Clone)]
+#[derive(Debug)]
 pub enum AssistantAction {
     MusicBot(MusicBotAction)
 }
 
 #[derive(Clone)]
+#[derive(Debug)]
 pub enum MusicBotAction {
     Summon,
     Dismiss,
@@ -143,12 +145,12 @@ impl DiscordAssistant {
                 self.speaker.stop().await;
             },
             "summon_music_bot" => {
-                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Summon));
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Summon)).unwrap();
                 self.speaker.speak(&function_call.arguments).await;
                 self.respondant = None;
             },
             "dismiss_music_bot" => {
-                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Dismiss));
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Dismiss)).unwrap();
                 self.speaker.speak(&function_call.arguments).await;
                 self.respondant = None;
             }
@@ -156,7 +158,7 @@ impl DiscordAssistant {
                 if let Ok(args) = serde_json::from_str::<Value>(&function_call.arguments) {
                     if let Some(title_value) = args.get("title") {
                         if let Some(title) = title_value.as_str() {
-                            self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Request(title.into())));
+                            self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Request(title.into()))).unwrap();
                             self.speaker.speak("On it!").await;
                             self.respondant = None;
                             return;
@@ -167,27 +169,27 @@ impl DiscordAssistant {
                 }    
             }       
             "skip_music_bot" => {
-                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Skip));
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Skip)).unwrap();
                 self.speaker.speak(&function_call.arguments).await;
                 self.respondant = None;
             }
             "shuffle_music_bot" => {
-                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Shuffle));
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Shuffle)).unwrap();
                 self.speaker.speak(&function_call.arguments).await;
                 self.respondant = None;
             }
             "clear_music_bot" => {
-                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Clear));
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Clear)).unwrap();
                 self.speaker.speak(&function_call.arguments).await;
                 self.respondant = None;
             }
             "loop_music_bot" => {
-                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Loop));
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Loop)).unwrap();
                 self.speaker.speak(&function_call.arguments).await;
                 self.respondant = None;
             }
             "bassboost_music_bot" => {
-                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::BassBoost));
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::BassBoost)).unwrap();
                 self.speaker.speak(&function_call.arguments).await;
                 self.respondant = None;
             }
@@ -195,7 +197,7 @@ impl DiscordAssistant {
                 if let Ok(args) = serde_json::from_str::<Value>(&function_call.arguments) {
                     if let Some(playlist_value) = args.get("playlist") {
                         if let Some(playlist) = playlist_value.as_str() {
-                            self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::PlayPlaylist(playlist.into())));
+                            self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::PlayPlaylist(playlist.into()))).unwrap();
                             self.speaker.speak("On it!").await;
                             self.respondant = None;
                             return;
