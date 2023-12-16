@@ -11,10 +11,11 @@ use simple_error::bail;
 use songbird::model::id::UserId;
 use songbird::{EventHandler as VoiceEventHandler, EventContext, model::payload::{Speaking, ClientDisconnect}, Event, Config, driver::DecodeMode, SerenityInit, CoreEvent};
 use async_trait::async_trait;
-use tokio::sync::{RwLock, mpsc, Mutex};
+use tokio::sync::{RwLock, mpsc, Mutex, broadcast};
 
+use crate::action_handler::action_handler_loop;
 use crate::agent_speaker::AgentSpeaker;
-use crate::assistant::DiscordAssistant;
+use crate::assistant::{DiscordAssistant, AssistantAction};
 use crate::{listener, resampler};
 use crate::sound_store::SoundStore;
 
@@ -22,7 +23,8 @@ pub struct SharedState {
     pub users: HashMap<u32, mpsc::Sender<resampler::ListenerEvent>>,
     pub id_to_ssrc: HashMap<UserId, u32>,
     pub oai_client: Arc<OpenAIClient<OpenAIConfig>>,
-    pub sound_store: Arc<SyncMutex<SoundStore>>
+    pub sound_store: Arc<SyncMutex<SoundStore>>,
+    pub action_channel_tx: broadcast::Sender<AssistantAction>
 }
 
 impl TypeMapKey for SharedState {
@@ -37,8 +39,17 @@ struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn ready(&self, _: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
+
+        let music_bot_channel_id: u64 = env::var("MUSIC_CMD_CHANNEL").expect("Couldn't find env MUSIC_CMD_CHANNEL!").parse().unwrap();
+        //let channel = ctx.cache.guild_channel(music_bot_channel_id).unwrap();
+        let read_guard = ctx.data.read().await;
+        let state = read_guard.get::<SharedState>();
+        let action_rx = state.unwrap().action_channel_tx.subscribe();
+        tokio::spawn(async move {
+            action_handler_loop(ctx.http.clone(), ChannelId(music_bot_channel_id), action_rx).await;
+        });
     }
 }
 
@@ -75,9 +86,10 @@ impl VoiceEventHandler for Receiver {
                         let (tx_listener_event, rx_listener_event) = mpsc::channel::<resampler::ListenerEvent>(32);
                         state.users.insert(ssrc.clone(), tx_listener_event);
 
+                        let ssrc = ssrc.clone();
                         let assistant = self.assistant.clone();
                         tokio::spawn(async move {
-                            listener::listener_loop(rx_listener_event, assistant).await;
+                            listener::listener_loop(rx_listener_event, assistant, ssrc).await;
                         });
                     }
                 }
@@ -147,7 +159,7 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
         let mut data_guard = ctx.data.write().await;
         if let Some(state) = data_guard.get_mut::<SharedState>() {
             let speaker = AgentSpeaker::new(manager.clone(), guild.id, state.sound_store.clone());
-            Arc::new(Mutex::new(DiscordAssistant::new(state.oai_client.clone(), speaker).await))
+            Arc::new(Mutex::new(DiscordAssistant::new(state.oai_client.clone(), speaker, state.action_channel_tx.clone()).await))
         }
         else {
             bail!("couldn't create discord assistant for channel!")

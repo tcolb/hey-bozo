@@ -732,6 +732,7 @@ dependencies = [
  "pv_porcupine",
  "ringbuf",
  "rubato",
+ "serde_json",
  "serenity",
  "simple-error",
  "songbird",
