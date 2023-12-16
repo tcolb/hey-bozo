@@ -20,7 +20,13 @@ pub enum AssistantAction {
 pub enum MusicBotAction {
     Summon,
     Dismiss,
-    Request(String)
+    Request(String),
+    Skip,
+    Shuffle,
+    Loop,
+    Clear,
+    BassBoost,
+    PlayPlaylist(String)
 }
 
 pub struct DiscordAssistant {
@@ -159,7 +165,46 @@ impl DiscordAssistant {
                     self.speaker.speak("Sorry I made a fucky wucky!").await;
                     self.respondant = None;
                 }    
-            }            
+            }       
+            "skip_music_bot" => {
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Skip));
+                self.speaker.speak(&function_call.arguments).await;
+                self.respondant = None;
+            }
+            "shuffle_music_bot" => {
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Shuffle));
+                self.speaker.speak(&function_call.arguments).await;
+                self.respondant = None;
+            }
+            "clear_music_bot" => {
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Clear));
+                self.speaker.speak(&function_call.arguments).await;
+                self.respondant = None;
+            }
+            "loop_music_bot" => {
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::Loop));
+                self.speaker.speak(&function_call.arguments).await;
+                self.respondant = None;
+            }
+            "bassboost_music_bot" => {
+                self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::BassBoost));
+                self.speaker.speak(&function_call.arguments).await;
+                self.respondant = None;
+            }
+            "play_playlist_music_bot" => {
+                if let Ok(args) = serde_json::from_str::<Value>(&function_call.arguments) {
+                    if let Some(playlist_value) = args.get("playlist") {
+                        if let Some(playlist) = playlist_value.as_str() {
+                            self.action_channel.send(AssistantAction::MusicBot(MusicBotAction::PlayPlaylist(playlist.into())));
+                            self.speaker.speak("On it!").await;
+                            self.respondant = None;
+                            return;
+                        }
+                    }
+                }
+                self.speaker.speak("Sorry I made a fucky wucky!").await;
+                self.respondant = None;
+            }
             _ => {
                 println!("unsupported function call: {}", function_call.name);
             }
@@ -193,6 +238,36 @@ impl DiscordAssistant {
             name: "request_music_bot".to_string(),
             description: Some("The user wants to add a song or video by title to the music bot queue.".to_string()),
             parameters: serde_json::from_str("{\"type\": \"object\", \"properties\": { \"title\": { \"type\": \"string\", \"description\": \"The title of the song or video, e.g. Abba - Dancing Queen\" } }}").unwrap()
+        });
+        self.functions.push(ChatCompletionFunctions {
+            name: "skip_music_bot".to_string(),
+            description: Some("The user wants the music bot to skip a song.".to_string()),
+            parameters: serde_json::from_str("{\"type\": \"object\", \"properties\": {}}").unwrap()
+        });
+        self.functions.push(ChatCompletionFunctions {
+            name: "shuffle_music_bot".to_string(),
+            description: Some("The user wants the music bot to shuffle it's queue.".to_string()),
+            parameters: serde_json::from_str("{\"type\": \"object\", \"properties\": {}}").unwrap()
+        });
+        self.functions.push(ChatCompletionFunctions {
+            name: "clear_music_bot".to_string(),
+            description: Some("The user wants to clear the music bot queue.".to_string()),
+            parameters: serde_json::from_str("{\"type\": \"object\", \"properties\": {}}").unwrap()
+        });
+        self.functions.push(ChatCompletionFunctions {
+            name: "loop_music_bot".to_string(),
+            description: Some("The user wants to loop the last song in the music bot queue.".to_string()),
+            parameters: serde_json::from_str("{\"type\": \"object\", \"properties\": {}}").unwrap()
+        });
+        self.functions.push(ChatCompletionFunctions {
+            name: "bassboost_music_bot".to_string(),
+            description: Some("The user wants to toggle bass boost for the music bot.".to_string()),
+            parameters: serde_json::from_str("{\"type\": \"object\", \"properties\": {}}").unwrap()
+        });
+        self.functions.push(ChatCompletionFunctions {
+            name: "play_playlist_music_bot".to_string(),
+            description: Some("The user wants the music bot to play a specific playlist.".to_string()),
+            parameters: serde_json::from_str("{\"type\": \"object\", \"properties\": { \"playlist\": { \"type\": \"string\", \"description\": \"The title of the playlist.\" } }}").unwrap()
         });
     }
 

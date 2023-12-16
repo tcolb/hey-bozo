@@ -17,9 +17,27 @@ pub async fn action_handler_loop(http: Arc<Http>, channel: ChannelId, mut action
                     }
                     MusicBotAction::Dismiss => {
                         channel.say(&http, "=leave").await;
-                    },
+                    }
                     MusicBotAction::Request(title) => {
                         channel.say(&http, format!("=p {}", title)).await;
+                    }
+                    MusicBotAction::Skip => {
+                        channel.say(&http, "=skip").await;
+                    }
+                    MusicBotAction::Shuffle => {
+                        channel.say(&http, "=shuffle").await;
+                    }
+                    MusicBotAction::Loop => {
+                        channel.say(&http, "=loop").await;
+                    }
+                    MusicBotAction::Clear => {
+                        channel.say(&http, "=clear").await;
+                    }
+                    MusicBotAction::BassBoost => {
+                        channel.say(&http, "=bb").await;
+                    }
+                    MusicBotAction::PlayPlaylist(playlist) => {
+                        channel.say(&http, format!("=playlist play {}", playlist)).await;
                     }
                 }
             }
