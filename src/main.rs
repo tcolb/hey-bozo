@@ -4,6 +4,7 @@ mod listener;
 mod sound_store;
 mod agent_speaker;
 mod resampler;
+mod actions;
 mod action_handler;
 
 use std::{collections::HashMap, sync::Arc};

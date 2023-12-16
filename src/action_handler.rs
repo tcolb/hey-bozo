@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use serenity::{model::{channel::GuildChannel, id::ChannelId}, http::Http};
+use serenity::{model:: id::ChannelId, http::Http};
 use tokio::sync::broadcast;
 
-use crate::assistant::{AssistantAction, MusicBotAction};
+use crate::actions::{AssistantAction, MusicBotAction};
 
 pub async fn action_handler_loop(http: Arc<Http>, channel: ChannelId, mut action_rx: broadcast::Receiver<AssistantAction>) {
     loop {
